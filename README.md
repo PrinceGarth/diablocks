@@ -14,3 +14,5 @@ Sprites and tiles are from Pixel Dungeon by Watabou, as adapted by Noodlemire in
 [VoxelDungeon](https://content.luanti.org/packages/Noodlemire/voxeldungeon/) (GPL-3.0-only), so this
 project is GPL-3.0 as well (see `LICENSE`). The Luanti camera approach is inspired by Extra Ordinance
 by Sumianvoice; no code or media was copied from it.
+
+Original concept: Oran.
