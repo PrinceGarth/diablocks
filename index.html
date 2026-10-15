@@ -53,6 +53,7 @@
     <p><b>Sword</b> &nbsp; <kbd>Left</kbd> swing (chips walls if nothing is in front) &nbsp; <kbd>Right</kbd> firebolt, auto-aims near the cursor</p>
     <p><b>Pickaxe</b> &nbsp; hold <kbd>Left</kbd> to dig fast &nbsp; <b>Barricades</b> &nbsp; <kbd>Right</kbd> place</p>
     <p><kbd>Space</kbd> Psionic Blast &nbsp; <kbd>F</kbd> firebolt at the nearest monster in front &nbsp; <kbd>R</kbd> Scroll of Upgrade (5 gold)</p>
+    <p><kbd>Shift</kbd> dash (you can't be hit mid-dash) &nbsp; Red zones are about to hurt: step out, dash, or hit the monster to interrupt it</p>
     <p>Monsters sleep until you get close: explore, open chests, dig gold veins, and pick your fights. Push outward from the Sewers through Prison, Caves and the Dwarven City.</p>
     <div class="go" id="go"><span id="loading">loading sprites...</span></div>
     <p><small>Art: Pixel Dungeon by Watabou, via Noodlemire's VoxelDungeon (GPL-3.0)</small></p>
@@ -69,6 +70,7 @@
   <div class="skill hot" id="h2"><b>3</b><img class="px" src="assets/voxeldungeon_tiles_sewers_door.png"><small id="hn"></small></div>
   <div class="skill" id="s1"><b>Space</b>&#x1F300;<div class="cd"></div></div>
   <div class="skill" id="s2"><b>F / RMB</b>&#x1F525;<div class="cd"></div></div>
+  <div class="skill" id="s3"><b>Shift</b>&#x1F4A8;<div class="cd"></div></div>
   <div class="panel res" id="res"></div>
 </div>
 
@@ -344,17 +346,17 @@ selectItem(0);
 
 // ---------- enemies ----------
 const MOBS = {
-  rat:      { name: 'Marsupial Rat', hp: [14, 6], dmg: [3, 2], speed: 2.6, size: 1.2 },
-  albino:   { name: 'Albino Rat', hp: [20, 7], dmg: [4, 2], speed: 2.7, size: 1.3 },
-  crab:     { name: 'Sewer Crab', hp: [28, 10], dmg: [4, 2], speed: 1.8, size: 1.4 },
-  scout:    { name: 'Gnoll Scout', hp: [18, 8], dmg: [4, 2], speed: 2.3, size: 1.6 },
-  skeleton: { name: 'Skeleton', hp: [24, 9], dmg: [5, 2.4], speed: 2.2, size: 1.7 },
-  thief:    { name: 'Crazy Thief', hp: [14, 5], dmg: [5, 2.2], speed: 3.5, size: 1.6 },
-  bandit:   { name: 'Bandit', hp: [22, 8], dmg: [6, 2.4], speed: 3.1, size: 1.6 },
-  wraith:   { name: 'Wraith', hp: [20, 8], dmg: [6, 2.6], speed: 2.9, size: 1.6, ghost: true },
-  mimic:    { name: 'Mimic', hp: [40, 14], dmg: [6, 3], speed: 2.0, size: 1.6 },
-  statue:   { name: 'Animated Statue', hp: [50, 18], dmg: [8, 3], speed: 1.5, size: 1.8 },
-  bomb:     { name: 'Bomb Rat', hp: [12, 5], dmg: [4, 2], speed: 2.7, size: 1.3, tex: 'rat', bomber: true },
+  rat:      { name: 'Marsupial Rat', hp: [14, 6], dmg: [3, 2], speed: 3.0, size: 1.2, ai: 'melee', wind: 0.4 },
+  albino:   { name: 'Albino Rat', hp: [20, 7], dmg: [4, 2], speed: 3.0, size: 1.3, ai: 'melee', wind: 0.35 },
+  crab:     { name: 'Sewer Crab', hp: [28, 10], dmg: [5, 2.2], speed: 1.8, size: 1.4, ai: 'melee', wind: 0.65 },
+  scout:    { name: 'Gnoll Scout', hp: [18, 8], dmg: [4, 2], speed: 2.4, size: 1.6, ai: 'ranged', wind: 0.45 },
+  skeleton: { name: 'Skeleton', hp: [24, 9], dmg: [5, 2.4], speed: 2.2, size: 1.7, ai: 'slam', wind: 0.8 },
+  thief:    { name: 'Crazy Thief', hp: [14, 5], dmg: [5, 2.2], speed: 3.4, size: 1.6, ai: 'charger', wind: 0.55 },
+  bandit:   { name: 'Bandit', hp: [22, 8], dmg: [6, 2.4], speed: 3.0, size: 1.6, ai: 'charger', wind: 0.6 },
+  wraith:   { name: 'Wraith', hp: [20, 8], dmg: [6, 2.6], speed: 3.0, size: 1.6, ghost: true, ai: 'melee', wind: 0.4 },
+  mimic:    { name: 'Mimic', hp: [40, 14], dmg: [7, 3], speed: 2.2, size: 1.5, ai: 'slam', wind: 0.7, heavy: true },
+  statue:   { name: 'Animated Statue', hp: [50, 18], dmg: [8, 3], speed: 1.5, size: 1.8, ai: 'slam', wind: 0.95, heavy: true },
+  bomb:     { name: 'Bomb Rat', hp: [12, 5], dmg: [4, 2], speed: 2.7, size: 1.3, tex: 'rat', bomber: true, ai: 'bomber' },
 };
 const SPAWN = [
   [['rat', 4], ['albino', 1], ['crab', 2], ['bomb', 2]],
@@ -369,17 +371,25 @@ const enemies = [];
 const enemyRoot = new THREE.Group(); scene.add(enemyRoot);
 // Monsters are placed once, asleep, when the dungeon is generated (Pixel Dungeon style).
 // They wake when you get close with a clear line of sight, or when you hurt them, and wake their roommates.
-function makeEnemy(type, x, z, L, room) {
+const AFFIX = { swift: [1.2, 1.2, 0.5], armored: [0.7, 0.85, 1.35], vampiric: [1.35, 0.55, 0.9], explosive: [1.5, 0.8, 0.35] };
+function makeEnemy(type, x, z, L, room, disguised) {
   const def = MOBS[type];
   const e = { type, def, x, y: 1, z, vy: 0, lvl: L, hp: def.hp[0] + def.hp[1] * L, dmg: def.dmg[0] + def.dmg[1] * L,
     cd: 0, fuse: 0, speed: def.speed, flash: 0, blocked: 0, sideT: 0, side: 1, ghost: !!def.ghost, size: def.size,
-    alert: false, alertAt: 0, room };
+    alert: false, alertAt: 0, room, state: 'chase', stun: 0, kx: 0, kz: 0, wind: def.wind || 0.45, heavy: !!def.heavy, disguised: !!disguised };
+  if (!disguised && type !== 'bomb' && Math.random() < 0.1) { // elite: tougher, shinier, guaranteed loot
+    e.affix = pick(Object.keys(AFFIX)); e.elite = true; e.heavy = true;
+    e.hp *= 2.2; e.dmg *= 1.25; e.size *= 1.25;
+    if (e.affix === 'swift') { e.speed *= 1.45; e.wind *= 0.7; }
+  }
+  e.tint = e.affix ? AFFIX[e.affix] : (def.bomber ? [1.6, 0.55, 0.5] : [1, 1, 1]);
   e.maxHp = e.hp;
   const grp = new THREE.Group();
-  e.sprite = makeSprite(spriteTex[A('icon_mob_' + (def.tex || type))], def.size, def.bomber ? [1.6, 0.55, 0.5] : null);
+  e.sprite = makeSprite(disguised ? chestTex() : spriteTex[A('icon_mob_' + (def.tex || type))], disguised ? 1.0 : e.size, e.tint);
   grp.add(e.sprite);
-  e.bar = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.1), new THREE.MeshBasicMaterial({ color: 0xe53935, depthTest: false }));
-  e.bar.position.y = def.size + 0.35; e.bar.renderOrder = 10; e.bar.visible = false; grp.add(e.bar);
+  e.bar = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.1), new THREE.MeshBasicMaterial({ color: e.elite ? 0xffd23f : 0xe53935, depthTest: false }));
+  e.bar.position.y = e.size + 0.35; e.bar.renderOrder = 10; e.bar.visible = false; grp.add(e.bar);
+  e.title = (e.affix ? e.affix[0].toUpperCase() + e.affix.slice(1) + ' ' : '') + def.name;
   e.mesh = grp; grp.position.set(x, 1, z); enemyRoot.add(grp); enemies.push(e);
   return e;
 }
@@ -391,8 +401,10 @@ function lineOfSight(ax, az, bx, bz) {
 }
 function wake(e) {
   if (e.alert) return;
+  if (e.disguised) { e.disguised = false; e.sprite.material.map = spriteTex[A('icon_mob_mimic')]; e.sprite.scale.set(e.size, e.size, 1); e.sprite.position.y = e.size / 2; log('<b style="color:#ff7a1a">It was a Mimic!</b>'); }
   e.alert = true; e.bar.visible = true;
   floatText(e.x, e.y + e.size + 0.5, e.z, '!', '#ffd23f', 20);
+  if (e.elite) { floatText(e.x, e.y + e.size + 1.1, e.z, e.title, '#ffd23f', 15); log(`Elite: <span style="color:#ffd23f">${e.title}</span>`); }
   for (const o of enemies) if (!o.alert && o.room === e.room && !o.alertAt) o.alertAt = t + rnd(0.1, 0.7);
 }
 const chests = [];
@@ -411,6 +423,7 @@ function populate() {
     }
     if (Math.random() < 0.45) {
       const p = randomTileIn(r); if (!p) return;
+      if (Math.random() < 0.25) { makeEnemy('mimic', p[0], p[1], 1 + zone * 3 + rint(0, 1), i, true); return; }
       const s = makeSprite(chestTex(), 1.0); s.position.set(p[0], 1 + 0.5, p[1]); scene.add(s);
       chests.push({ x: p[0], z: p[1], zone, s });
     }
@@ -444,7 +457,10 @@ function trickle() {
 function killEnemy(e, byPlayer) {
   enemies.splice(enemies.indexOf(e), 1); enemyRoot.remove(e.mesh);
   burst(e.x, e.y + 0.6, e.z, e.def.bomber ? 0xff5a3a : 0x9bb27a, 10);
+  hideTele(e);
+  if (e.affix === 'explosive') { if (Math.hypot(e.x - P.x, e.z - P.z) < 3) hurtPlayer(e.dmg * 1.5, null); explode(e.x, e.y + 0.6, e.z, 2.3); }
   if (!byPlayer) return;
+  if (e.elite) { let it = rollItem(e.lvl); for (let i = 0; i < 2; i++) { const b = rollItem(e.lvl); if (b.rar > it.rar) it = b; } dropLoot(e.x, e.y, e.z, it); }
   P.kills++; P.xp += 10 + e.lvl * 4;
   while (P.xp >= P.lvl * 40) { P.xp -= P.lvl * 40; P.lvl++; recompute(); P.hp = P.maxHp; log(`<b style="color:#ffd23f">Level ${P.lvl}!</b>`); }
   if (Math.random() < 0.45) dropLoot(e.x, e.y, e.z, rollItem(e.lvl));
@@ -527,8 +543,12 @@ function placeBlock(x, y, z) {
 }
 
 // ---------- combat ----------
-function hurtEnemy(e, dmg, crit) {
+function hurtEnemy(e, dmg, crit, kb = 0) {
+  if (e.affix === 'armored') dmg *= 0.5;
   e.hp -= dmg; e.flash = 0.12; wake(e);
+  if (kb) { const ax = e.x - P.x, az = e.z - P.z, l = Math.hypot(ax, az) || 1, k = kb * (e.heavy ? 0.35 : 1); e.kx = ax / l * k; e.kz = az / l * k; }
+  if (crit) shake = Math.max(shake, 0.12);
+  if (e.state === 'wind' && !e.heavy) { hideTele(e); e.state = 'chase'; e.cd = Math.max(e.cd, 0.6); e.stun = 0.3; floatText(e.x, e.y + e.size + 0.9, e.z, 'interrupted', '#9be37a', 12); }
   floatText(e.x, e.y + e.size + 0.4, e.z, Math.round(dmg) + (crit ? '!' : ''), crit ? '#ffd23f' : '#fff', crit ? 22 : 16);
   if (P.st.vamp) P.hp = Math.min(P.maxHp, P.hp + dmg * P.st.vamp / 100);
   if (e.hp <= 0) killEnemy(e, true);
@@ -537,9 +557,11 @@ function playerDamage(mult = 1) {
   const crit = Math.random() * 100 < P.st.crit;
   return { dmg: P.st.dmg * mult * rnd(0.9, 1.1) * (crit ? 2 : 1), crit };
 }
-function hurtPlayer(raw) {
+function hurtPlayer(raw, src) {
+  if (P.inv > 0) return;
   const d = Math.max(1, raw * 100 / (100 + P.st.armor * 3));
-  P.hp -= d; P.hurt = 0.15; P.sinceHit = 0; floatText(P.x, P.y + 2.2, P.z, '-' + Math.round(d), '#ff5252', 18);
+  P.hp -= d; P.hurt = 0.15; P.sinceHit = 0; shake = Math.max(shake, 0.3);
+  if (src && src.affix === 'vampiric') src.hp = Math.min(src.maxHp, src.hp + d * 2); floatText(P.x, P.y + 2.2, P.z, '-' + Math.round(d), '#ff5252', 18);
   if (P.hp <= 0) {
     log('<b style="color:#ff5252">You died. Oran wakes at the entrance.</b>');
     P.hp = P.maxHp; P.x = CX + 0.5; P.z = CX + 0.5; P.y = groundAt(P.x, P.z, H);
@@ -554,7 +576,7 @@ function nova() {
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.6, 32), new THREE.MeshBasicMaterial({ color: 0x66ccff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 }));
   ring.rotation.x = -Math.PI / 2; ring.position.set(P.x, P.y + 0.15, P.z); scene.add(ring);
   fx.push({ m: ring, t: 0.35, grow: 12 });
-  for (const e of [...enemies]) if (Math.hypot(e.x - P.x, e.z - P.z) < 4.2) { const r = playerDamage(2); hurtEnemy(e, r.dmg, r.crit); }
+  for (const e of [...enemies]) if (Math.hypot(e.x - P.x, e.z - P.z) < 4.2) { const r = playerDamage(2); hurtEnemy(e, r.dmg, r.crit, 10); }
 }
 const fx = [];
 const balls = [];
@@ -586,7 +608,7 @@ function updateBalls(dt) {
     let boom = b.dist > 20 || get(Math.floor(b.x), Math.floor(b.y), Math.floor(b.z)) || !inb(Math.floor(b.x), 0, Math.floor(b.z));
     if (!boom) for (const e of enemies) if (Math.hypot(e.x - b.x, e.z - b.z) < 0.9) { boom = true; break; }
     if (boom) {
-      for (const e of [...enemies]) if (Math.hypot(e.x - b.x, e.z - b.z) < 2.6) { const r = playerDamage(2.5); hurtEnemy(e, r.dmg, r.crit); }
+      for (const e of [...enemies]) if (Math.hypot(e.x - b.x, e.z - b.z) < 2.6) { const r = playerDamage(2.5); hurtEnemy(e, r.dmg, r.crit, 7); }
       explode(b.x, b.y, b.z, 1.7);
       scene.remove(b.m); balls.splice(balls.indexOf(b), 1);
     }
@@ -596,7 +618,7 @@ function updateBalls(dt) {
 // ---------- input ----------
 const ray = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-let started = false;
+let started = false, shake = 0;
 const keys = {}, btn = { 0: false, 2: false };
 const aim = { x: 1, z: 0 };
 const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), aimPt = new THREE.Vector3();
@@ -619,6 +641,11 @@ function digTarget(cd) {
   const p = h.point.clone().addScaledVector(h.face.normal, -0.5);
   const bx = Math.floor(p.x), by = Math.floor(p.y), bz = Math.floor(p.z);
   if (by < 1 || get(bx, by, bz) === BED) return false;
+  // only blocks on the surface of a wall can be dug; tunnel in one layer at a time
+  if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => inb(bx + a, 1, bz + b) && get(bx + a, 1, bz + b) === AIR) && by === 1) {
+    if (t - lastFar > 1) { lastFar = t; floatText(P.x, P.y + 2.2, P.z, 'solid rock', '#aaa', 13); }
+    return false;
+  }
   if (Math.hypot(bx + 0.5 - P.x, bz + 0.5 - P.z) > 5.5) {
     if (t - lastFar > 1) { lastFar = t; floatText(P.x, P.y + 2.2, P.z, 'too far', '#aaa', 13); }
     return false;
@@ -636,20 +663,35 @@ function placeAtCursor() {
 const swing = [];
 function swordSwing() {
   if (P.atkCd > 0) return;
+  const heavy = P.combo === 2 && t - (P.lastSwing || -9) < 1.0; // third hit of a chain is a heavy sweep
+  const reach = heavy ? 3.2 : 2.4, minCos = heavy ? -0.2 : 0.34;
   const hits = enemies.filter(e => {
+    if (e.disguised) return false;
     const ex = e.x - P.x, ez = e.z - P.z, d = Math.hypot(ex, ez);
-    return d < 2.4 && (d < 0.6 || (ex * aim.x + ez * aim.z) / d > 0.34);
+    return d < reach && (d < 0.6 || (ex * aim.x + ez * aim.z) / d > minCos);
   });
   if (hits.length) {
-    P.atkCd = 0.6 / haste();
+    P.atkCd = (heavy ? 0.7 : 0.45) / haste();
+    P.combo = heavy ? 0 : (t - (P.lastSwing || -9) < 1.0 ? (P.combo || 0) + 1 : 1); P.lastSwing = t;
+    if (heavy) { shake = Math.max(shake, 0.25); const rg = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.7, 28), new THREE.MeshBasicMaterial({ color: 0xffd23f, side: THREE.DoubleSide, transparent: true, opacity: 0.8 })); rg.rotation.x = -Math.PI / 2; rg.position.set(P.x, P.y + 0.15, P.z); scene.add(rg); fx.push({ m: rg, t: 0.3, grow: 9 }); }
     const wt = P.eq.weapon?.tex || A('tool_weapon_shortsword');
     const tx = itemTexCache[wt] || (itemTexCache[wt] = pxTex(imgCache[wt] || (() => { const i = new Image(); i.src = wt; return i; })()));
     const s = makeSprite(tx, 1.2); s.position.set(P.x + aim.x * 1.1, P.y + 1, P.z + aim.z * 1.1); s.material.depthTest = false; scene.add(s);
     swing.push({ s, t: 0.18 });
-    for (const e of hits) { const r = playerDamage(1); hurtEnemy(e, r.dmg, r.crit); }
+    for (const e of hits) { const r = playerDamage(heavy ? 1.8 : 1); hurtEnemy(e, r.dmg, r.crit, heavy ? 12 : 4); }
   } else {
     P.atkCd = 0.12; digTarget(0.5);
   }
+}
+function dash() {
+  if ((P.cd.s3 || 0) > 0) return;
+  P.cd.s3 = 3 / haste();
+  let kx = 0, kz = 0;
+  if (keys.KeyW) { kx -= 1; kz -= 1; } if (keys.KeyS) { kx += 1; kz += 1; }
+  if (keys.KeyA) { kx -= 1; kz += 1; } if (keys.KeyD) { kx += 1; kz -= 1; }
+  const l = Math.hypot(kx, kz);
+  P.dashDir = l ? [kx / l, kz / l] : [aim.x, aim.z];
+  P.dashT = 0.18; P.inv = 0.35;
 }
 function useLeft() {
   if (P.sel === 0) swordSwing();
@@ -675,6 +717,7 @@ addEventListener('keydown', ev => {
   if (!started) return;
   if (ev.code === 'Space') { ev.preventDefault(); nova(); }
   if (ev.code === 'KeyF') fireball('auto');
+  if (ev.code === 'ShiftLeft' || ev.code === 'ShiftRight') dash();
   if (ev.code === 'Digit1') selectItem(0);
   if (ev.code === 'Digit2') selectItem(1);
   if (ev.code === 'Digit3') selectItem(2);
@@ -744,6 +787,85 @@ function revealMap(px, pz, r) {
   d.style.left = (m.left + px * 2) + 'px'; d.style.top = (m.top + pz * 2) + 'px';
 }
 
+// ---------- enemy AI: telegraphed attacks you can dodge, interrupt or punish ----------
+const shots = [];
+function hideTele(e) { if (e.tele) { scene.remove(e.tele); e.tele = null; } }
+function showTele(e, kind, r, ddx, ddz) {
+  hideTele(e);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthTest: false });
+  let m;
+  if (kind === 'ring') { m = new THREE.Mesh(new THREE.CircleGeometry(r, 28), mat); m.rotation.x = -Math.PI / 2; }
+  else { m = new THREE.Group(); const pl = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 9), mat); pl.rotation.x = -Math.PI / 2; pl.position.z = -4.5; m.add(pl); m.rotation.y = Math.atan2(-ddx, -ddz); }
+  m.position.set(e.x, e.y + 0.06, e.z); m.renderOrder = 8; scene.add(m); e.tele = m;
+}
+function fireShot(e) {
+  const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz) || 1;
+  const k = A('tool_weapon_dagger');
+  const s = makeSprite(itemTexCache[k] || (itemTexCache[k] = pxTex(imgCache[k])), 0.8); s.position.set(e.x, e.y + 0.9, e.z); scene.add(s);
+  shots.push({ s, x: e.x, z: e.z, dx: dx / d, dz: dz / d, life: 2, dmg: e.dmg * 0.9, src: e });
+}
+function updateShots(dt) {
+  for (const b of [...shots]) {
+    b.x += b.dx * 9 * dt; b.z += b.dz * 9 * dt; b.life -= dt; b.s.material.rotation += dt * 14;
+    b.s.position.set(b.x, 1.9, b.z);
+    let dead = b.life <= 0 || get(Math.floor(b.x), 1, Math.floor(b.z));
+    if (!dead && Math.hypot(P.x - b.x, P.z - b.z) < 0.7) { hurtPlayer(b.dmg, b.src); dead = true; }
+    if (dead) { scene.remove(b.s); shots.splice(shots.indexOf(b), 1); }
+  }
+}
+// returns true if the enemy removed itself (bomb rat)
+function aiStep(e, dt, d, dx, dz) {
+  const ai = e.def.ai;
+  if (e.stun > 0) { e.stun -= dt; return false; }
+  if (e.state === 'wind') {
+    e.t -= dt;
+    if (e.t > 0) return false;
+    hideTele(e);
+    if (ai === 'charger' && e.chargeDir) { e.state = 'charge'; e.t = 0.45; e.hit = false; return false; }
+    if (ai === 'ranged') { fireShot(e); e.cd = 1.8; }
+    else {
+      const r = ai === 'slam' ? 2.6 : 1.6;
+      if (d < r + 0.3) hurtPlayer(e.dmg * (ai === 'slam' ? 1.3 : 1), e);
+      burst(e.x, e.y + 0.3, e.z, 0xff6a4a, 6);
+      e.cd = ai === 'slam' ? 1.6 : 1.2;
+    }
+    e.state = 'chase';
+    return false;
+  }
+  if (e.state === 'charge') {
+    e.t -= dt;
+    const s = 15 * dt;
+    if (!moveEntity(e, e.chargeDir[0] * s, e.chargeDir[1] * s)) { e.state = 'chase'; e.stun = 1.3; e.cd = 2; burst(e.x, e.y + 0.5, e.z, 0xcccccc, 8); floatText(e.x, e.y + e.size + 0.6, e.z, 'stunned', '#9be37a', 12); return false; }
+    if (!e.hit && Math.hypot(P.x - e.x, P.z - e.z) < 1.0) { e.hit = true; hurtPlayer(e.dmg * 1.2, e); }
+    if (e.t <= 0) { e.state = 'chase'; e.stun = 0.7; e.cd = 2.2; }
+    return false;
+  }
+  const sp = e.speed;
+  if (ai === 'bomber') {
+    if (d > 1.6) stepToward(e, P.x, P.z, sp * (e.fuse > 0 ? 0.3 : 1), dt);
+    if (d < 2.4) e.fuse += dt; else e.fuse = Math.max(0, e.fuse - dt);
+    if (e.fuse > 1.4) {
+      if (d < 3.4) hurtPlayer(e.dmg * 3, e);
+      explode(e.x, e.y + 0.6, e.z, 2.3);
+      killEnemy(e, false); return true;
+    }
+  } else if (ai === 'ranged') {
+    const ux = dx / d, uz = dz / d;
+    if (d < 4.5) moveEntity(e, -ux * sp * dt, -uz * sp * dt);
+    else if (d > 8.5) stepToward(e, P.x, P.z, sp, dt);
+    else moveEntity(e, -uz * sp * 0.6 * dt * e.side, ux * sp * 0.6 * dt * e.side);
+    if (e.cd <= 0 && d < 12 && lineOfSight(e.x, e.z, P.x, P.z)) { e.state = 'wind'; e.t = e.wind; }
+  } else {
+    if (ai === 'charger' && e.cd <= 0 && d > 3 && d < 10 && lineOfSight(e.x, e.z, P.x, P.z)) {
+      e.chargeDir = [dx / d, dz / d]; e.state = 'wind'; e.t = e.wind; showTele(e, 'line', 0, dx / d, dz / d); return false;
+    }
+    const reach = ai === 'slam' ? 2.0 : 1.3;
+    if (d > reach) stepToward(e, P.x, P.z, sp, dt);
+    else if (e.cd <= 0) { e.chargeDir = null; e.state = 'wind'; e.t = e.wind; showTele(e, 'ring', ai === 'slam' ? 2.6 : 1.6); }
+  }
+  return false;
+}
+
 // ---------- main loop ----------
 const clock = new THREE.Clock();
 let spawnT = 45, hudT = 0, t = 0, mapT = 0;
@@ -755,11 +877,13 @@ function update(dt) {
   t += dt;
   P.atkCd -= dt; P.mineCd -= dt; P.placeCd -= dt; P.cd.s1 -= dt; P.cd.s2 -= dt; P.hurt = (P.hurt || 0) - dt;
   const speed = 6 * haste();
+  P.cd.s3 = (P.cd.s3 || 0) - dt; P.inv = (P.inv || 0) - dt;
 
   let kx = 0, kz = 0;
   if (keys.KeyW) { kx -= 1; kz -= 1; } if (keys.KeyS) { kx += 1; kz += 1; }
   if (keys.KeyA) { kx -= 1; kz += 1; } if (keys.KeyD) { kx += 1; kz -= 1; }
-  if (kx || kz) { const l = Math.hypot(kx, kz); moveEntity(P, kx / l * speed * dt, kz / l * speed * dt); }
+  if (P.dashT > 0) { P.dashT -= dt; moveEntity(P, P.dashDir[0] * 30 * dt, P.dashDir[1] * 30 * dt); burst(P.x, P.y + 0.6, P.z, 0xbfd9ff, 1); }
+  else if (kx || kz) { const l = Math.hypot(kx, kz); moveEntity(P, kx / l * speed * dt, kz / l * speed * dt); }
   updateAim();
   if (btn[0]) useLeft();
   if (btn[2]) useRight();
@@ -775,36 +899,26 @@ function update(dt) {
     const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz);
     e.cd -= dt;
     if (d > 60) continue; // far away: frozen, costs nothing
+    if (e.disguised) { if (d < 2.2) wake(e); else continue; }
     if (!e.alert && (e.alertAt && t > e.alertAt || (d < 8.5 && lineOfSight(e.x, e.z, P.x, P.z)) || d < 2.5)) wake(e);
-    if (e.alert && d > 30) { e.alert = false; e.alertAt = 0; e.fuse = 0; e.bar.visible = false; } // lost you: back to sleep
+    if (e.alert && d > 30) { e.alert = false; e.alertAt = 0; e.fuse = 0; e.bar.visible = false; e.state = 'chase'; hideTele(e); } // lost you: back to sleep
     if (e.alert && d < 14) danger = true;
-    if (e.alert) {
-      if (!e.def.bomber) {
-        if (d > 1.2) stepToward(e, P.x, P.z, e.speed, dt);
-        else if (e.cd <= 0) { e.cd = 1; hurtPlayer(e.dmg); }
-      } else {
-        if (d > 1.6) stepToward(e, P.x, P.z, e.speed * (e.fuse > 0 ? 0.3 : 1), dt);
-        if (d < 2.4) e.fuse += dt; else e.fuse = Math.max(0, e.fuse - dt);
-        if (e.fuse > 1.4) {
-          if (d < 3.4) hurtPlayer(e.dmg * 3);
-          explode(e.x, e.y + 0.6, e.z, 2.3);
-          killEnemy(e, false); continue;
-        }
-      }
-    }
+    if (e.kx || e.kz) { moveEntity(e, e.kx * dt, e.kz * dt); const f = Math.exp(-9 * dt); e.kx *= f; e.kz *= f; if (Math.abs(e.kx) + Math.abs(e.kz) < 0.2) e.kx = e.kz = 0; }
+    if (e.alert && !e.disguised) { if (aiStep(e, dt, d, dx, dz)) continue; }
     gravity(e, dt);
     e.flash = Math.max(0, e.flash - dt);
     const pulse = e.def.bomber && e.fuse > 0 && Math.sin(t * 25) > 0;
+    if (e.disguised) { e.mesh.position.set(e.x, e.y, e.z); continue; }
     const m = e.sprite.material;
     if (e.flash > 0 || pulse) m.color.setRGB(3, 3, 3);
-    else if (e.def.bomber) m.color.setRGB(1.6, 0.55, 0.5);
-    else m.color.setRGB(1, 1, 1);
+    else if (e.state === 'wind' && Math.sin(t * 32) > 0) m.color.setRGB(2.4, 0.4, 0.4);
+    else m.color.setRGB(e.tint[0], e.tint[1], e.tint[2]);
     e.sprite.scale.x = (dx - dz) > 0 ? -e.size : e.size;
     e.mesh.position.set(e.x, e.y, e.z);
     e.bar.scale.x = Math.max(0.01, e.hp / e.maxHp);
     e.bar.quaternion.copy(camera.quaternion);
   }
-  updateBalls(dt);
+  updateBalls(dt); updateShots(dt);
 
   // calm-down regen so exploring between fights is sustainable
   P.sinceHit = (P.sinceHit ?? 99) + dt;
@@ -831,6 +945,7 @@ function update(dt) {
   sun.target.position.set(P.x, P.y, P.z);
   camPos.set(P.x + camOff.x, P.y + camOff.y, P.z + camOff.z);
   camera.position.lerp(camPos, 1 - Math.pow(0.001, dt));
+  if (shake > 0) { camera.position.x += rnd(-1, 1) * shake; camera.position.y += rnd(-1, 1) * shake * 0.6; shake = Math.max(0, shake - dt * 1.2); }
   camera.lookAt(camera.position.x - camOff.x, camera.position.y - camOff.y, camera.position.z - camOff.z);
 
   for (const f of [...floaters]) {
@@ -855,6 +970,7 @@ function hud() {
   $('hp').lastChild.textContent = `${Math.ceil(P.hp)}/${P.maxHp}`;
   $('s1').lastChild.style.height = Math.max(0, P.cd.s1 / (4 / haste())) * 100 + '%';
   $('s2').lastChild.style.height = Math.max(0, P.cd.s2 / (3 / haste())) * 100 + '%';
+  $('s3').lastChild.style.height = Math.max(0, (P.cd.s3 || 0) / (3 / haste())) * 100 + '%';
   $('res').innerHTML = `<img class="px" src="${A('item_gold')}" width="16"> Gold <b>${P.ore}</b> <small>(R: upgrade 5)</small><br>Barricades <b>${P.blocks}</b>`;
   for (let i = 0; i < 3; i++) $('h' + i).classList.toggle('sel', P.sel === i);
   $('hn').textContent = P.blocks;
@@ -867,6 +983,11 @@ populate(); revealMap(P.x, P.z, 10);
 log('Welcome to the dungeon. Monsters sleep until you get close, so explore: chests and gold veins hide in the rooms.');
 ready = true;
 $('go').textContent = '[ click to begin ]';
+if (location.search.includes('stress')) { // debug: one of everything, awake, in the entrance room
+  P.maxHp = P.hp = 5000; let k = 0;
+  for (const ty of Object.keys(MOBS)) { const ang = k++ / 11 * Math.PI * 2; const e = makeEnemy(ty, CX + 0.5 + Math.cos(ang) * 4, CX + 0.5 + Math.sin(ang) * 4, 3, -1); e.alert = true; e.bar.visible = true; }
+  const mm = makeEnemy('mimic', CX + 2.5, CX + 2.5, 3, -1, true);
+}
 if (location.search.includes('autostart')) { started = true; $('overlay').style.display = 'none'; }
 
 // debug handle for testing
