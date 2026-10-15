@@ -17,6 +17,8 @@
   .slot { margin-bottom:6px; display:flex; gap:8px; align-items:center; }
   .slot img { width:36px; height:36px; flex:none; }
   .slot small { color:#9a8f78; display:block; }
+  #mini { position:absolute; left:10px; top:200px; width:192px; height:192px; image-rendering:pixelated; background:#08060b; border:1px solid var(--gold); border-radius:4px; opacity:.92; }
+  #minidot { position:absolute; width:6px; height:6px; margin:-3px 0 0 -3px; background:#fff; border:1px solid #000; border-radius:50%; left:0; top:0; }
   #log { left:10px; bottom:96px; width:360px; background:none; border:none; padding:0; pointer-events:none; }
   #log div { text-shadow:0 1px 2px #000; transition:opacity 1s; }
   #bar { bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:14px; align-items:flex-end; background:none; border:none; }
@@ -51,13 +53,14 @@
     <p><b>Sword</b> &nbsp; <kbd>Left</kbd> swing (chips walls if nothing is in front) &nbsp; <kbd>Right</kbd> firebolt, auto-aims near the cursor</p>
     <p><b>Pickaxe</b> &nbsp; hold <kbd>Left</kbd> to dig fast &nbsp; <b>Barricades</b> &nbsp; <kbd>Right</kbd> place</p>
     <p><kbd>Space</kbd> Psionic Blast &nbsp; <kbd>F</kbd> firebolt at the nearest monster in front &nbsp; <kbd>R</kbd> Scroll of Upgrade (5 gold)</p>
-    <p>Fight outward from the Sewers through Prison, Caves and the Dwarven City. Dig the gold veins. Bomb Rats will ruin your day.</p>
+    <p>Monsters sleep until you get close: explore, open chests, dig gold veins, and pick your fights. Push outward from the Sewers through Prison, Caves and the Dwarven City.</p>
     <div class="go" id="go"><span id="loading">loading sprites...</span></div>
     <p><small>Art: Pixel Dungeon by Watabou, via Noodlemire's VoxelDungeon (GPL-3.0)</small></p>
   </div>
 </div>
 <div id="stats" class="panel"></div>
 <div id="gear" class="panel"></div>
+<canvas id="mini" width="96" height="96"></canvas><div id="minidot"></div>
 <div id="log" class="panel"></div>
 <div id="bar" class="panel">
   <div class="orb" id="hp"><div class="fill"></div><span></span></div>
@@ -105,7 +108,7 @@ function pxTex(img) {
 const imgCache = {};
 const getTex = name => spriteTex[name];
 {
-  const names = [...MOB_IDS.map(m => A('icon_mob_' + m)), 'assets/dbl_hero.png'];
+  const names = [...MOB_IDS.map(m => A('icon_mob_' + m)), A('node_chest_icon'), 'assets/dbl_hero.png'];
   const all = await Promise.all([...tileSrcs, ...names].map(loadImg));
   tileSrcs.concat(names).forEach((s, i) => { imgCache[s] = all[i]; });
   for (const s of names) spriteTex[s] = pxTex(imgCache[s]);
@@ -364,24 +367,77 @@ const wpick = l => { let r = Math.random() * l.reduce((s, e) => s + e[1], 0); fo
 
 const enemies = [];
 const enemyRoot = new THREE.Group(); scene.add(enemyRoot);
-function spawnEnemy() {
-  if (enemies.length >= 14) return;
-  for (let tries = 0; tries < 12; tries++) {
-    const ang = Math.random() * Math.PI * 2, d = rnd(14, 24);
-    const x = P.x + Math.cos(ang) * d, z = P.z + Math.sin(ang) * d;
-    if (![[0, 0], [.6, 0], [-.6, 0], [0, .6], [0, -.6]].every(([a, b]) => isFloor(x + a, z + b))) continue;
-    const zone = zoneAt(x, z), type = wpick(SPAWN[zone]), def = MOBS[type];
-    const L = P.lvl + zone;
-    const e = { type, def, x, y: 1, z, vy: 0, lvl: L, hp: def.hp[0] + def.hp[1] * L, dmg: def.dmg[0] + def.dmg[1] * L,
-      cd: 0, fuse: 0, speed: def.speed, flash: 0, blocked: 0, sideT: 0, side: 1, ghost: !!def.ghost, size: def.size };
-    e.maxHp = e.hp;
-    const grp = new THREE.Group();
-    e.sprite = makeSprite(spriteTex[A('icon_mob_' + (def.tex || type))], def.size, def.bomber ? [1.6, 0.55, 0.5] : null);
-    grp.add(e.sprite);
-    grp.traverse(o => { o.userData.enemy = e; });
-    e.bar = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.1), new THREE.MeshBasicMaterial({ color: 0xe53935, depthTest: false }));
-    e.bar.position.y = def.size + 0.35; e.bar.renderOrder = 10; grp.add(e.bar);
-    e.mesh = grp; enemyRoot.add(grp); enemies.push(e);
+// Monsters are placed once, asleep, when the dungeon is generated (Pixel Dungeon style).
+// They wake when you get close with a clear line of sight, or when you hurt them, and wake their roommates.
+function makeEnemy(type, x, z, L, room) {
+  const def = MOBS[type];
+  const e = { type, def, x, y: 1, z, vy: 0, lvl: L, hp: def.hp[0] + def.hp[1] * L, dmg: def.dmg[0] + def.dmg[1] * L,
+    cd: 0, fuse: 0, speed: def.speed, flash: 0, blocked: 0, sideT: 0, side: 1, ghost: !!def.ghost, size: def.size,
+    alert: false, alertAt: 0, room };
+  e.maxHp = e.hp;
+  const grp = new THREE.Group();
+  e.sprite = makeSprite(spriteTex[A('icon_mob_' + (def.tex || type))], def.size, def.bomber ? [1.6, 0.55, 0.5] : null);
+  grp.add(e.sprite);
+  e.bar = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.1), new THREE.MeshBasicMaterial({ color: 0xe53935, depthTest: false }));
+  e.bar.position.y = def.size + 0.35; e.bar.renderOrder = 10; e.bar.visible = false; grp.add(e.bar);
+  e.mesh = grp; grp.position.set(x, 1, z); enemyRoot.add(grp); enemies.push(e);
+  return e;
+}
+const randomTileIn = r => { for (let i = 0; i < 20; i++) { const x = rint(r.x1, r.x2), z = rint(r.z1, r.z2); if (open[z * N + x] && open[z * N + x + 1] && open[z * N + x - 1]) return [x + 0.5, z + 0.5]; } return null; };
+function lineOfSight(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.ceil(d / 0.6);
+  for (let i = 1; i < n; i++) { const f = i / n; if (get(Math.floor(ax + (bx - ax) * f), 1, Math.floor(az + (bz - az) * f))) return false; }
+  return true;
+}
+function wake(e) {
+  if (e.alert) return;
+  e.alert = true; e.bar.visible = true;
+  floatText(e.x, e.y + e.size + 0.5, e.z, '!', '#ffd23f', 20);
+  for (const o of enemies) if (!o.alert && o.room === e.room && !o.alertAt) o.alertAt = t + rnd(0.1, 0.7);
+}
+const chests = [];
+const chestTex = () => spriteTex[A('node_chest_icon')];
+function populate() {
+  const sp = { x: CX + 0.5, z: CX + 0.5 };
+  rooms.forEach((r, i) => {
+    r.id = i;
+    if (r.cx === CX && r.cz === CX) return; // the entrance stays quiet
+    const zone = zoneAt(r.cx, r.cz), area = (r.x2 - r.x1 + 1) * (r.z2 - r.z1 + 1);
+    let n = Math.floor(area / 32) + rint(0, 1);
+    if (zone === 0) n = Math.max(0, n - 1);
+    for (let k = 0; k < Math.min(3, n); k++) {
+      const p = randomTileIn(r); if (!p) continue;
+      makeEnemy(wpick(SPAWN[zone]), p[0], p[1], 1 + zone * 3 + rint(0, 1), i);
+    }
+    if (Math.random() < 0.45) {
+      const p = randomTileIn(r); if (!p) return;
+      const s = makeSprite(chestTex(), 1.0); s.position.set(p[0], 1 + 0.5, p[1]); scene.add(s);
+      chests.push({ x: p[0], z: p[1], zone, s });
+    }
+  });
+}
+function openChest(c) {
+  chests.splice(chests.indexOf(c), 1); scene.remove(c.s);
+  burst(c.x, 1.5, c.z, 0xe0b440, 14);
+  const n = rint(1, 2);
+  for (let i = 0; i < n; i++) {
+    let it = rollItem(1 + c.zone * 3 + 1), it2 = rollItem(1 + c.zone * 3 + 1);
+    if (it2.rar > it.rar) it = it2; // chests lean toward the better roll
+    dropLoot(c.x + rnd(-0.8, 0.8), 1, c.z + rnd(-0.8, 0.8), it);
+  }
+  const g = rint(2, 4) + c.zone * 2; P.ore += g;
+  log(`Chest! <span style="color:#e0b440">+${g} gold</span>`);
+  revealMap(c.x, c.z, 0);
+}
+// slow trickle so a cleared dungeon is never empty forever: one sleeper far from you every 45s
+function trickle() {
+  if (enemies.length >= 70) return;
+  for (let i = 0; i < 10; i++) {
+    const r = pick(rooms);
+    if (r.cx === CX && r.cz === CX) continue;
+    const p = randomTileIn(r); if (!p || Math.hypot(p[0] - P.x, p[1] - P.z) < 26) continue;
+    const zone = zoneAt(p[0], p[1]);
+    makeEnemy(wpick(SPAWN[zone]), p[0], p[1], 1 + zone * 3 + rint(0, 1), rooms.indexOf(r));
     return;
   }
 }
@@ -472,7 +528,7 @@ function placeBlock(x, y, z) {
 
 // ---------- combat ----------
 function hurtEnemy(e, dmg, crit) {
-  e.hp -= dmg; e.flash = 0.12;
+  e.hp -= dmg; e.flash = 0.12; wake(e);
   floatText(e.x, e.y + e.size + 0.4, e.z, Math.round(dmg) + (crit ? '!' : ''), crit ? '#ffd23f' : '#fff', crit ? 22 : 16);
   if (P.st.vamp) P.hp = Math.min(P.maxHp, P.hp + dmg * P.st.vamp / 100);
   if (e.hp <= 0) killEnemy(e, true);
@@ -483,7 +539,7 @@ function playerDamage(mult = 1) {
 }
 function hurtPlayer(raw) {
   const d = Math.max(1, raw * 100 / (100 + P.st.armor * 3));
-  P.hp -= d; P.hurt = 0.15; floatText(P.x, P.y + 2.2, P.z, '-' + Math.round(d), '#ff5252', 18);
+  P.hp -= d; P.hurt = 0.15; P.sinceHit = 0; floatText(P.x, P.y + 2.2, P.z, '-' + Math.round(d), '#ff5252', 18);
   if (P.hp <= 0) {
     log('<b style="color:#ff5252">You died. Oran wakes at the entrance.</b>');
     P.hp = P.maxHp; P.x = CX + 0.5; P.z = CX + 0.5; P.y = groundAt(P.x, P.z, H);
@@ -663,9 +719,34 @@ function stepToward(e, tx, tz, speed, dt) {
   return d;
 }
 
+
+// ---------- minimap / fog of war ----------
+const explored = new Uint8Array(N * N);
+const mapCtx = $('mini').getContext('2d');
+const ZFLOOR = ['#4a5058', '#6a5a46', '#585868', '#3d5a8c', '#8a3a2e'];
+function paintTile(x, z) {
+  const solid = !open[z * N + x];
+  mapCtx.fillStyle = solid ? '#17131d' : ZFLOOR[zoneAt(x, z)];
+  if (solid && get(x, 1, z) === ORE) mapCtx.fillStyle = '#6b5a22';
+  mapCtx.fillRect(x, z, 1, 1);
+}
+function revealMap(px, pz, r) {
+  const x0 = Math.floor(px), z0 = Math.floor(pz);
+  for (let x = x0 - r; x <= x0 + r; x++) for (let z = z0 - r; z <= z0 + r; z++) {
+    if (x < 0 || z < 0 || x >= N || z >= N || (x - px) ** 2 + (z - pz) ** 2 > r * r) continue;
+    if (explored[z * N + x] && r) continue;
+    // only floor tiles in line of sight, plus the wall tiles bordering them
+    if (r && !lineOfSight(px, pz, x + 0.5, z + 0.5) && open[z * N + x]) continue;
+    explored[z * N + x] = 1; paintTile(x, z);
+  }
+  for (const c of chests) if (explored[Math.floor(c.z) * N + Math.floor(c.x)]) { mapCtx.fillStyle = '#ffd23f'; mapCtx.fillRect(Math.floor(c.x) - 1, Math.floor(c.z) - 1, 3, 3); }
+  const d = $('minidot'), m = $('mini').getBoundingClientRect();
+  d.style.left = (m.left + px * 2) + 'px'; d.style.top = (m.top + pz * 2) + 'px';
+}
+
 // ---------- main loop ----------
 const clock = new THREE.Clock();
-let spawnT = 0, hudT = 0, t = 0;
+let spawnT = 45, hudT = 0, t = 0, mapT = 0;
 const camOff = new THREE.Vector3(13, 15, 13);
 const camPos = new THREE.Vector3(P.x + camOff.x, P.y + camOff.y, P.z + camOff.z);
 const tint = new THREE.Color();
@@ -688,12 +769,16 @@ function update(dt) {
   playerSprite.scale.x = (aim.x - aim.z) < 0 ? -1.7 : 1.7;
   playerSprite.material.color.setRGB(1, P.hurt > 0 ? 0.4 : 1, P.hurt > 0 ? 0.4 : 1);
 
-  spawnT -= dt; if (spawnT <= 0) { spawnEnemy(); spawnT = 2.2; }
+  spawnT -= dt; if (spawnT <= 0) { trickle(); spawnT = 45; }
+  let danger = false; // any awake monster close by?
   for (const e of [...enemies]) {
     const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz);
     e.cd -= dt;
-    if (d > 45) { enemies.splice(enemies.indexOf(e), 1); enemyRoot.remove(e.mesh); continue; }
-    if (d < 22) {
+    if (d > 60) continue; // far away: frozen, costs nothing
+    if (!e.alert && (e.alertAt && t > e.alertAt || (d < 8.5 && lineOfSight(e.x, e.z, P.x, P.z)) || d < 2.5)) wake(e);
+    if (e.alert && d > 30) { e.alert = false; e.alertAt = 0; e.fuse = 0; e.bar.visible = false; } // lost you: back to sleep
+    if (e.alert && d < 14) danger = true;
+    if (e.alert) {
       if (!e.def.bomber) {
         if (d > 1.2) stepToward(e, P.x, P.z, e.speed, dt);
         else if (e.cd <= 0) { e.cd = 1; hurtPlayer(e.dmg); }
@@ -720,6 +805,12 @@ function update(dt) {
     e.bar.quaternion.copy(camera.quaternion);
   }
   updateBalls(dt);
+
+  // calm-down regen so exploring between fights is sustainable
+  P.sinceHit = (P.sinceHit ?? 99) + dt;
+  if (!danger && P.sinceHit > 4 && P.hp < P.maxHp) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * dt);
+  for (const c of [...chests]) if (Math.hypot(c.x - P.x, c.z - P.z) < 1.4) openChest(c);
+  mapT -= dt; if (mapT <= 0) { mapT = 0.15; revealMap(P.x, P.z, 10); }
 
   for (const d of [...drops]) {
     d.t += dt; d.mesh.children[0].position.y = 0.7 + Math.sin(d.t * 3) * 0.12;
@@ -772,13 +863,14 @@ function hud() {
 let ready = false;
 renderer.setAnimationLoop(() => { const dt = Math.min(clock.getDelta(), 0.05); if (started) update(dt); renderer.render(scene, camera); });
 camera.position.copy(camPos); camera.lookAt(P.x, P.y, P.z); hud();
-log('Welcome to the dungeon. Kill something.');
+populate(); revealMap(P.x, P.z, 10);
+log('Welcome to the dungeon. Monsters sleep until you get close, so explore: chests and gold veins hide in the rooms.');
 ready = true;
 $('go').textContent = '[ click to begin ]';
 if (location.search.includes('autostart')) { started = true; $('overlay').style.display = 'none'; }
 
 // debug handle for testing
-window.__game = { P, enemies, drops, balls, aim, fireball, selectItem, get terrain() { return terrain; }, camera, rollItem, spawnEnemy, open, vox, N };
+window.__game = { P, enemies, drops, balls, aim, fireball, selectItem, get terrain() { return terrain; }, camera, rollItem, open, chests, rooms, wake, vox, N };
 </script>
 </body>
 </html>
